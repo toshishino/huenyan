@@ -4,3 +4,6 @@ viewers.db
 viewers.db-shm
 viewers.db-wal
 *.log
+
+timer-state.json
+digit-design.json
