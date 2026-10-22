@@ -1,0 +1,14 @@
+{
+  "name": "huenyan-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ふえニャン Windows desktop launcher",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "install:server": "npm --prefix ../uta-timer-server install"
+  },
+  "devDependencies": {
+    "electron": "^33.4.0"
+  }
+}

@@ -158,6 +158,13 @@
     <button class="save-btn secondary" id="resetBtn" style="border-color:var(--magenta); color:var(--magenta);">初コメ判定をリセット（配信開始時）</button>
   </section>
 
+  <section>
+    <h2>タイマーを開く</h2>
+    <p class="section-sub">配信操作用画面を開いてください。OBSには下のURLをブラウザソースとして追加します。</p>
+    <a href="/timer" target="_blank" rel="noopener" class="save-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">タイマー操作画面を開く</a>
+    <button class="save-btn secondary" id="copyObsUrl">OBS用URLをコピー</button>
+    <div style="font-size:11px;color:var(--muted);word-break:break-all;margin-top:8px" id="obsUrl"></div>
+  </section>
   <button class="save-btn" id="saveBtn">設定を保存して反映</button>
   <button class="save-btn secondary" id="reloadBtn" style="margin-top:8px;">状態を更新</button>
 
@@ -261,6 +268,12 @@ $('resetBtn').addEventListener('click', async ()=>{
   }
 });
 
+const obsUrl = location.origin + '/timer?obs=1';
+$('obsUrl').textContent = obsUrl;
+$('copyObsUrl').addEventListener('click',async()=>{
+  try { await navigator.clipboard.writeText(obsUrl); showToast('OBS用URLをコピーしました'); }
+  catch (_) { showToast('コピーできませんでした。URLを手動でコピーしてください'); }
+});
 loadConfig();
 setInterval(async ()=>{
   const res = await fetch('/api/status');

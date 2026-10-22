@@ -391,6 +391,27 @@
     <div class="settings-row"><span>設定を反映してリセット</span><button class="btn-secondary" id="applySettings" style="padding:8px 14px;font-size:12px;">適用</button></div>
   </div>
 
+  <button class="settings-toggle" id="designToggle">🎨 数字のデザインを変更</button>
+  <div class="settings" id="designSettings">
+    <div class="settings-row"><span>数字の色</span><input type="color" id="digitColor" value="#F5F0E8"></div>
+    <div class="settings-row"><span>数字の大きさ (%)</span><input type="number" id="digitSize" min="50" max="200" value="100"></div>
+    <div class="settings-row"><span>数字の太さ</span><input type="number" id="digitWeight" min="100" max="900" step="100" value="700"></div>
+    <div class="settings-row"><span>縁取りの色</span><input type="color" id="digitOutlineColor" value="#000000"></div>
+    <div class="settings-row"><span>縁取りの太さ (px)</span><input type="number" id="digitOutline" min="0" max="10" value="0"></div>
+    <div class="settings-row"><span>文字の影</span><input type="checkbox" id="digitShadow" checked></div>
+    <div class="settings-row"><span>保存</span><button class="btn-secondary" id="designSave">デザインを保存</button></div>
+  </div>
+
+  <button class="settings-toggle" id="imageDigitsToggle">🖼 画像の数字を使う</button>
+  <div class="settings" id="imageDigitsPanel">
+    <p style="font-size:12px;color:var(--muted);line-height:1.7">0〜9の透過PNGを選択してください。ファイル名を 0.png〜9.png にするとまとめて読み込めます。小さめの画像を推奨します。</p>
+    <div class="settings-row"><span>画像数字を使う</span><input type="checkbox" id="imageDigitsEnabled"></div>
+    <div class="settings-row"><span>数字画像（複数選択）</span><input type="file" id="imageDigitsFiles" accept="image/png,image/webp" multiple style="width:190px;font-size:11px"></div>
+    <div class="settings-row"><span>表示高さ（px）</span><input type="number" id="imageDigitsHeight" value="90" min="16" max="300"></div>
+    <div class="settings-row"><span>数字の間隔（px）</span><input type="number" id="imageDigitsGap" value="2" min="0" max="50"></div>
+    <div class="settings-row"><span>登録済み</span><span id="imageDigitsStatus" style="font-size:12px">0 / 10</span></div>
+    <div class="settings-row"><span>操作</span><button class="btn-secondary" id="imageDigitsClear">画像を削除</button></div>
+  </div>
   <div class="history-title">追加履歴</div>
   <div class="history" id="history">
     <div class="history-empty">まだ追加はありません</div>
@@ -408,6 +429,12 @@
   const params = new URLSearchParams(location.search);
   if(params.get('obs') === '1'){ document.body.classList.add('obs-mode'); }
 
+  const hosted = location.protocol === 'http:' && location.hostname === '127.0.0.1';
+  const isOverlay = params.get('obs') === '1';
+  let syncingRemote = false;
+  let stateHydrated = false;
+  let stateSaveTimer = null;
+  let lastTickAt = Date.now();
   let settings = { base:30, comment:5, gift:10 };
   let remaining = settings.base * 60; // seconds
   let running = false;
@@ -436,7 +463,8 @@
   }
 
   function render(){
-    clockEl.textContent = fmt(remaining);
+    if (hosted && !isOverlay && !syncingRemote && stateHydrated) scheduleStateSave();
+    renderDigitClock(fmt(remaining));
     clockEl.classList.toggle('overtime', remaining < 0);
     statusDot.classList.toggle('running', running && remaining >= 0);
     statusDot.classList.toggle('overtime', remaining < 0);
@@ -497,14 +525,19 @@
   }
 
   function tick(){
-    remaining -= 1;
+    const now = Date.now();
+    const elapsed = Math.max(0,Math.floor((now-lastTickAt)/1000));
+    if (elapsed===0) return;
+    lastTickAt += elapsed*1000;
+    remaining -= elapsed;
     render();
   }
 
   toggleBtn.addEventListener('click', ()=>{
     running = !running;
     if(running){
-      intervalId = setInterval(tick, 1000);
+      lastTickAt = Date.now();
+      intervalId = setInterval(tick, 250);
     } else {
       clearInterval(intervalId);
     }
@@ -563,7 +596,7 @@
   const autoBadge = $('autoBadge');
   const resetSessionRow = $('resetSessionRow');
   const resetSessionBtn = $('resetSessionBtn');
-  const wsUrl = params.get('ws');
+  const wsUrl = params.get('ws') || (hosted ? 'ws://127.0.0.1:8787' : null);
   let activeSocket = null;
 
   if(wsUrl){
@@ -613,6 +646,8 @@
     socket.addEventListener('message', (msg)=>{
       let ev;
       try{ ev = JSON.parse(msg.data); } catch(e){ return; }
+      if (ev.type === 'timer_state') { if (isOverlay) applyRemoteState(ev.state); return; }
+      if (ev.type === 'digit_design') { applyRemoteDesign(ev.design); return; }
       handleAutoEvent(ev);
     });
   }
@@ -621,6 +656,7 @@
     const platform = ev.source === 'twitch' ? 'Twitch' : ev.source === 'youtube' ? 'YouTube' : ev.source;
     const who = ev.user ? ev.user : '';
 
+    if (isOverlay && ev.type !== 'timer_state') return;
     if(ev.type === 'session_reset'){
       history.push({type:'manual', label:'初コメ判定リセット', delta:'', time: new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})});
       render();
@@ -650,6 +686,198 @@
     if(e.key.toLowerCase() === 'g'){ giftBtnQuick.click(); }
   });
 
+  // Windowsアプリ版では同一サーバーから開き、操作画面だけが状態を更新する。
+  function scheduleStateSave() {
+    if (!hosted || isOverlay) return;
+    clearTimeout(stateSaveTimer);
+    stateSaveTimer = setTimeout(() => {
+      fetch('/api/timer-state', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({remaining,running,settings,commentCount,giftCount,history,track})
+      }).catch(e=>console.warn('タイマー保存失敗',e));
+    }, 150);
+  }
+  function applyRemoteState(s) {
+    if (!s || !Number.isFinite(s.remaining)) return;
+    syncingRemote = true;
+    remaining = s.remaining;
+    running = !!s.running;
+    settings = {...settings,...s.settings};
+    commentCount = Number(s.commentCount)||0;
+    giftCount = Number(s.giftCount)||0;
+    history = Array.isArray(s.history)?s.history:[];
+    track = Array.isArray(s.track)?s.track:[];
+    clearInterval(intervalId);
+    lastTickAt=Date.now();
+    if (running) intervalId=setInterval(tick,250);
+    render();
+    syncingRemote = false;
+    stateHydrated = true;
+  }
+  if (hosted) {
+    fetch('/api/timer-state').then(r=>r.json()).then(applyRemoteState).catch(e=>{console.warn(e);stateHydrated=true;});
+    if (isOverlay) {
+      toggleBtn.disabled=true;
+      resetBtn.disabled=true;
+    }
+  }
+  // 画像数字の初期実装。ローカルストレージの容量制限に注意。
+  const imageDigitKey = 'huenyan-image-digits-v1';
+  let imageDigits = {};
+  let imageDigitsEnabled = false;
+  let imageDigitsHeight = 90;
+  let imageDigitsGap = 2;
+  try {
+    const data = JSON.parse(localStorage.getItem(imageDigitKey) || '{}');
+    imageDigits = data.images || {};
+    imageDigitsEnabled = !!data.enabled;
+    imageDigitsHeight = Number(data.height) || 90;
+    imageDigitsGap = Number(data.gap) || 2;
+  } catch (e) { console.warn('数字画像を復元できません', e); }
+  const imageDigitsPanel = document.getElementById('imageDigitsPanel');
+  document.getElementById('imageDigitsToggle').addEventListener('click', () => imageDigitsPanel.classList.toggle('open'));
+  const imageEnabledInput = document.getElementById('imageDigitsEnabled');
+  const imageHeightInput = document.getElementById('imageDigitsHeight');
+  const imageGapInput = document.getElementById('imageDigitsGap');
+  imageEnabledInput.checked = imageDigitsEnabled;
+  imageHeightInput.value = imageDigitsHeight;
+  imageGapInput.value = imageDigitsGap;
+  function saveImageDigits() {
+    if (hosted && !isOverlay) fetch('/api/digit-design',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images:imageDigits,enabled:imageDigitsEnabled,height:imageDigitsHeight,gap:imageDigitsGap})}).catch(e=>console.warn('数字画像保存失敗',e));
+    try {
+      localStorage.setItem(imageDigitKey, JSON.stringify({ images:imageDigits, enabled:imageDigitsEnabled, height:imageDigitsHeight, gap:imageDigitsGap }));
+    } catch (e) {
+      alert('画像を保存できませんでした。画像サイズを小さくしてください。');
+    }
+  }
+  function applyRemoteDesign(d) {
+    if (!d || typeof d!=='object') return;
+    imageDigits = d.images || {};
+    imageDigitsEnabled = !!d.enabled;
+    imageDigitsHeight = Number(d.height)||90;
+    imageDigitsGap = Number(d.gap)||2;
+    imageEnabledInput.checked=imageDigitsEnabled;
+    imageHeightInput.value=imageDigitsHeight;
+    imageGapInput.value=imageDigitsGap;
+    updateImageDigitStatus();
+    render();
+  }
+  if (hosted) fetch('/api/digit-design').then(r=>r.json()).then(d=>{if(Object.keys(d).length) applyRemoteDesign(d);}).catch(console.warn);
+  function updateImageDigitStatus() {
+    document.getElementById('imageDigitsStatus').textContent = Object.keys(imageDigits).filter(k => /^[0-9]$/.test(k)).length + ' / 10';
+  }
+  function renderDigitClock(value) {
+    if (!imageDigitsEnabled || !Object.keys(imageDigits).length) {
+      clockEl.style.display = '';
+      clockEl.style.gap = '';
+      clockEl.textContent = value;
+      return;
+    }
+    clockEl.replaceChildren();
+    clockEl.style.display = 'flex';
+    clockEl.style.alignItems = 'center';
+    clockEl.style.justifyContent = 'center';
+    clockEl.style.gap = imageDigitsGap + 'px';
+    for (const ch of value) {
+      if (imageDigits[ch]) {
+        const img = document.createElement('img');
+        img.src = imageDigits[ch];
+        img.alt = ch;
+        img.style.height = imageDigitsHeight + 'px';
+        img.style.width = 'auto';
+        img.style.objectFit = 'contain';
+        clockEl.appendChild(img);
+      } else {
+        const span = document.createElement('span');
+        span.textContent = ch;
+        span.style.fontSize = imageDigitsHeight + 'px';
+        clockEl.appendChild(span);
+      }
+    }
+  }
+  imageEnabledInput.addEventListener('change', () => {
+    imageDigitsEnabled = imageEnabledInput.checked;
+    saveImageDigits();
+    render();
+  });
+  imageHeightInput.addEventListener('input', () => {
+    imageDigitsHeight = Math.min(300, Math.max(16, Number(imageHeightInput.value) || 90));
+    saveImageDigits();
+    render();
+  });
+  imageGapInput.addEventListener('input', () => {
+    imageDigitsGap = Math.min(50, Math.max(0, Number(imageGapInput.value) || 0));
+    saveImageDigits();
+    render();
+  });
+  document.getElementById('imageDigitsFiles').addEventListener('change', async event => {
+    const files = Array.from(event.target.files || []);
+    for (const file of files) {
+      const match = file.name.match(/^([0-9])\.(png|webp)$/i);
+      if (!match) continue;
+      if (file.size > 300000) { alert(file.name + ' は300KB以下にしてください'); continue; }
+      const encoded = await new Promise((resolve,reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      imageDigits[match[1]] = encoded;
+    }
+    imageDigitsEnabled = true;
+    imageEnabledInput.checked = true;
+    updateImageDigitStatus();
+    saveImageDigits();
+    render();
+  });
+  document.getElementById('imageDigitsClear').addEventListener('click', () => {
+    if (!confirm('登録した数字画像を削除しますか？')) return;
+    imageDigits = {};
+    imageDigitsEnabled = false;
+    imageEnabledInput.checked = false;
+    saveImageDigits();
+    updateImageDigitStatus();
+    render();
+  });
+  updateImageDigitStatus();
+  // 数字デザインはブラウザごとに保存。OBS表示用URLでも同じ保存領域が必要です。
+  const designKeys = ['digitColor','digitSize','digitWeight','digitOutlineColor','digitOutline','digitShadow'];
+  const designPanel = document.getElementById('designSettings');
+  document.getElementById('designToggle').addEventListener('click', () => {
+    designPanel.classList.toggle('open');
+  });
+  function applyDigitDesign() {
+    const color = document.getElementById('digitColor').value;
+    const size = Math.min(200, Math.max(50, Number(document.getElementById('digitSize').value) || 100));
+    const weight = Number(document.getElementById('digitWeight').value) || 700;
+    const outline = Math.min(10, Math.max(0, Number(document.getElementById('digitOutline').value) || 0));
+    clockEl.style.color = color;
+    clockEl.style.fontSize = 'clamp(48px, ' + (size * (document.body.classList.contains('obs-mode') ? .22 : .11)) + 'vw, ' + (size * (document.body.classList.contains('obs-mode') ? 1.4 : .9)) + 'px)';
+    clockEl.style.fontWeight = String(weight);
+    clockEl.style.webkitTextStroke = outline + 'px ' + document.getElementById('digitOutlineColor').value;
+    clockEl.style.textShadow = document.getElementById('digitShadow').checked ? '0 4px 18px rgba(0,0,0,.5)' : 'none';
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem('huenyan-digit-design') || '{}');
+    for (const key of designKeys) {
+      const el = document.getElementById(key);
+      if (saved[key] !== undefined) {
+        if (el.type === 'checkbox') el.checked = !!saved[key];
+        else el.value = saved[key];
+      }
+      el.addEventListener('input', applyDigitDesign);
+    }
+  } catch(e) { console.warn('デザイン設定を読み込めませんでした', e); }
+  document.getElementById('designSave').addEventListener('click', () => {
+    const data = {};
+    for (const key of designKeys) {
+      const el = document.getElementById(key);
+      data[key] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    localStorage.setItem('huenyan-digit-design', JSON.stringify(data));
+    alert('デザインを保存しました');
+  });
+  applyDigitDesign();
   render();
 })();
 </script>
