@@ -391,6 +391,17 @@
     <div class="settings-row"><span>設定を反映してリセット</span><button class="btn-secondary" id="applySettings" style="padding:8px 14px;font-size:12px;">適用</button></div>
   </div>
 
+  <button class="settings-toggle" id="designToggle">🎨 数字のデザインを変更</button>
+  <div class="settings" id="designSettings">
+    <div class="settings-row"><span>数字の色</span><input type="color" id="digitColor" value="#F5F0E8"></div>
+    <div class="settings-row"><span>数字の大きさ (%)</span><input type="number" id="digitSize" min="50" max="200" value="100"></div>
+    <div class="settings-row"><span>数字の太さ</span><input type="number" id="digitWeight" min="100" max="900" step="100" value="700"></div>
+    <div class="settings-row"><span>縁取りの色</span><input type="color" id="digitOutlineColor" value="#000000"></div>
+    <div class="settings-row"><span>縁取りの太さ (px)</span><input type="number" id="digitOutline" min="0" max="10" value="0"></div>
+    <div class="settings-row"><span>文字の影</span><input type="checkbox" id="digitShadow" checked></div>
+    <div class="settings-row"><span>保存</span><button class="btn-secondary" id="designSave">デザインを保存</button></div>
+  </div>
+
   <div class="history-title">追加履歴</div>
   <div class="history" id="history">
     <div class="history-empty">まだ追加はありません</div>
@@ -650,6 +661,44 @@
     if(e.key.toLowerCase() === 'g'){ giftBtnQuick.click(); }
   });
 
+  // 数字デザインはブラウザごとに保存。OBS表示用URLでも同じ保存領域が必要です。
+  const designKeys = ['digitColor','digitSize','digitWeight','digitOutlineColor','digitOutline','digitShadow'];
+  const designPanel = document.getElementById('designSettings');
+  document.getElementById('designToggle').addEventListener('click', () => {
+    designPanel.classList.toggle('open');
+  });
+  function applyDigitDesign() {
+    const color = document.getElementById('digitColor').value;
+    const size = Math.min(200, Math.max(50, Number(document.getElementById('digitSize').value) || 100));
+    const weight = Number(document.getElementById('digitWeight').value) || 700;
+    const outline = Math.min(10, Math.max(0, Number(document.getElementById('digitOutline').value) || 0));
+    clockEl.style.color = color;
+    clockEl.style.fontSize = 'clamp(48px, ' + (size * (document.body.classList.contains('obs-mode') ? .22 : .11)) + 'vw, ' + (size * (document.body.classList.contains('obs-mode') ? 1.4 : .9)) + 'px)';
+    clockEl.style.fontWeight = String(weight);
+    clockEl.style.webkitTextStroke = outline + 'px ' + document.getElementById('digitOutlineColor').value;
+    clockEl.style.textShadow = document.getElementById('digitShadow').checked ? '0 4px 18px rgba(0,0,0,.5)' : 'none';
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem('huenyan-digit-design') || '{}');
+    for (const key of designKeys) {
+      const el = document.getElementById(key);
+      if (saved[key] !== undefined) {
+        if (el.type === 'checkbox') el.checked = !!saved[key];
+        else el.value = saved[key];
+      }
+      el.addEventListener('input', applyDigitDesign);
+    }
+  } catch(e) { console.warn('デザイン設定を読み込めませんでした', e); }
+  document.getElementById('designSave').addEventListener('click', () => {
+    const data = {};
+    for (const key of designKeys) {
+      const el = document.getElementById(key);
+      data[key] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    localStorage.setItem('huenyan-digit-design', JSON.stringify(data));
+    alert('デザインを保存しました');
+  });
+  applyDigitDesign();
   render();
 })();
 </script>
