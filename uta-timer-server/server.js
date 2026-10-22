@@ -37,6 +37,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 自分一人で使ってる間は既定値のままでOK。
 const STREAMER_ID = process.env.STREAMER_ID || 'default';
 const WS_PORT = process.env.WS_PORT || 8787;
+const HOST = process.env.HOST || '127.0.0.1';
+const timerHtmlPath = path.resolve(__dirname, '../uta-timer.html');
+const timerStatePath = path.join(__dirname, 'timer-state.json');
+let timerState = { remaining:1800, running:false, updatedAt:Date.now(), settings:{base:30,comment:5,gift:10}, commentCount:0, giftCount:0, history:[], track:[] };
+try { timerState = {...timerState,...JSON.parse(fs.readFileSync(timerStatePath,'utf8'))}; } catch (_) {}
+function currentTimerState() { const s={...timerState}; if(s.running) s.remaining-=Math.floor((Date.now()-s.updatedAt)/1000); return s; }
+function saveTimerState(state) { timerState={...state,updatedAt:Date.now()}; fs.writeFileSync(timerStatePath,JSON.stringify(timerState)); broadcast({type:'timer_state',state:currentTimerState()}); }
+
 
 // ------------------------------------------------------------
 // ユーザーが設定画面から変更できる項目。
@@ -361,6 +369,18 @@ async function readJsonBody(req) {
 async function handleHttp(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  if (req.method === 'GET' && url.pathname === '/timer') {
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); res.end(fs.readFileSync(timerHtmlPath,'utf8')); return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/timer-state') {
+    res.writeHead(200, {'Content-Type':'application/json','Cache-Control':'no-store'}); res.end(JSON.stringify(currentTimerState())); return;
+  }
+  if (req.method === 'POST' && url.pathname === '/api/timer-state') {
+    const update=await readJsonBody(req);
+    if (!Number.isFinite(update.remaining) || Math.abs(update.remaining)>864000 || typeof update.running!=='boolean') { res.writeHead(400);res.end('invalid state');return; }
+    saveTimerState({...timerState,...update,remaining:Math.trunc(update.remaining),history:Array.isArray(update.history)?update.history.slice(-100):[],track:Array.isArray(update.track)?update.track.slice(-100):[]});
+    res.writeHead(200, {'Content-Type':'application/json'});res.end(JSON.stringify({ok:true}));return;
+  }
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/settings')) {
     const html = fs.readFileSync(path.join(__dirname, 'settings.html'), 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -402,6 +422,7 @@ async function handleHttp(req, res) {
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
   clients.add(ws);
+  ws.send(JSON.stringify({type:'timer_state',state:currentTimerState()}));
   console.log('[server] timer screen connected');
   ws.on('close', () => clients.delete(ws));
   ws.on('message', (raw) => {
@@ -413,7 +434,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(WS_PORT, () => {
+server.listen(WS_PORT, HOST, () => {
   console.log(`[server] listening on http://localhost:${WS_PORT}  (設定画面はブラウザでここを開く)`);
   console.log(`[server] WebSocket also available at ws://localhost:${WS_PORT}`);
   console.log('[server] 「r」+Enter で初コメ判定をリセットできます(配信をまたいで常駐させる場合用)');
