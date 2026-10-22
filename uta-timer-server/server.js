@@ -39,8 +39,10 @@ const STREAMER_ID = process.env.STREAMER_ID || 'default';
 const WS_PORT = process.env.WS_PORT || 8787;
 const HOST = process.env.HOST || '127.0.0.1';
 const timerHtmlPath = path.resolve(__dirname, '../uta-timer.html');
-const timerStatePath = path.join(__dirname, 'timer-state.json');
-const digitDesignPath = path.join(__dirname,'digit-design.json');
+const userDataDir = process.env.HUENYAN_DATA_DIR || __dirname;
+fs.mkdirSync(userDataDir,{recursive:true});
+const timerStatePath = path.join(userDataDir, 'timer-state.json');
+const digitDesignPath = path.join(userDataDir,'digit-design.json');
 let digitDesign = {};
 try { digitDesign=JSON.parse(fs.readFileSync(digitDesignPath,'utf8')); } catch (_) {}
 let timerState = { remaining:1800, running:false, updatedAt:Date.now(), settings:{base:30,comment:5,gift:10}, commentCount:0, giftCount:0, history:[], track:[] };
