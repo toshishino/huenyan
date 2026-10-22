@@ -432,6 +432,7 @@
   const hosted = location.protocol === 'http:' && location.hostname === '127.0.0.1';
   const isOverlay = params.get('obs') === '1';
   let syncingRemote = false;
+  let stateHydrated = false;
   let stateSaveTimer = null;
   let lastTickAt = Date.now();
   let settings = { base:30, comment:5, gift:10 };
@@ -462,7 +463,7 @@
   }
 
   function render(){
-    if (hosted && !isOverlay && !syncingRemote) scheduleStateSave();
+    if (hosted && !isOverlay && !syncingRemote && stateHydrated) scheduleStateSave();
     renderDigitClock(fmt(remaining));
     clockEl.classList.toggle('overtime', remaining < 0);
     statusDot.classList.toggle('running', running && remaining >= 0);
@@ -711,9 +712,10 @@
     if (running) intervalId=setInterval(tick,250);
     render();
     syncingRemote = false;
+    stateHydrated = true;
   }
   if (hosted) {
-    fetch('/api/timer-state').then(r=>r.json()).then(applyRemoteState).catch(console.warn);
+    fetch('/api/timer-state').then(r=>r.json()).then(applyRemoteState).catch(e=>{console.warn(e);stateHydrated=true;});
     if (isOverlay) {
       toggleBtn.disabled=true;
       resetBtn.disabled=true;
