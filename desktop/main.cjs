@@ -21,7 +21,7 @@ app.whenReady().then(() => {
   const serverDir = path.resolve(__dirname, '../uta-timer-server');
   server = spawn(process.execPath, [path.join(serverDir, 'server.js')], {
     cwd: serverDir,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', WS_PORT: String(PORT) },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', WS_PORT: String(PORT), HUENYAN_DATA_DIR: app.getPath('userData') },
     stdio: 'pipe',
     windowsHide: true
   });
