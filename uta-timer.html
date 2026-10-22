@@ -645,7 +645,8 @@
     socket.addEventListener('message', (msg)=>{
       let ev;
       try{ ev = JSON.parse(msg.data); } catch(e){ return; }
-      if (ev.type === 'timer_state') { applyRemoteState(ev.state); return; }
+      if (ev.type === 'timer_state') { if (isOverlay) applyRemoteState(ev.state); return; }
+      if (ev.type === 'digit_design') { applyRemoteDesign(ev.design); return; }
       handleAutoEvent(ev);
     });
   }
@@ -740,12 +741,26 @@
   imageHeightInput.value = imageDigitsHeight;
   imageGapInput.value = imageDigitsGap;
   function saveImageDigits() {
+    if (hosted && !isOverlay) fetch('/api/digit-design',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images:imageDigits,enabled:imageDigitsEnabled,height:imageDigitsHeight,gap:imageDigitsGap})}).catch(e=>console.warn('数字画像保存失敗',e));
     try {
       localStorage.setItem(imageDigitKey, JSON.stringify({ images:imageDigits, enabled:imageDigitsEnabled, height:imageDigitsHeight, gap:imageDigitsGap }));
     } catch (e) {
       alert('画像を保存できませんでした。画像サイズを小さくしてください。');
     }
   }
+  function applyRemoteDesign(d) {
+    if (!d || typeof d!=='object') return;
+    imageDigits = d.images || {};
+    imageDigitsEnabled = !!d.enabled;
+    imageDigitsHeight = Number(d.height)||90;
+    imageDigitsGap = Number(d.gap)||2;
+    imageEnabledInput.checked=imageDigitsEnabled;
+    imageHeightInput.value=imageDigitsHeight;
+    imageGapInput.value=imageDigitsGap;
+    updateImageDigitStatus();
+    render();
+  }
+  if (hosted) fetch('/api/digit-design').then(r=>r.json()).then(d=>{if(Object.keys(d).length) applyRemoteDesign(d);}).catch(console.warn);
   function updateImageDigitStatus() {
     document.getElementById('imageDigitsStatus').textContent = Object.keys(imageDigits).filter(k => /^[0-9]$/.test(k)).length + ' / 10';
   }
