@@ -704,6 +704,8 @@
   }
   function renderDigitClock(value) {
     if (!imageDigitsEnabled || !Object.keys(imageDigits).length) {
+      clockEl.style.display = '';
+      clockEl.style.gap = '';
       clockEl.textContent = value;
       return;
     }
