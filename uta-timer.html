@@ -429,6 +429,11 @@
   const params = new URLSearchParams(location.search);
   if(params.get('obs') === '1'){ document.body.classList.add('obs-mode'); }
 
+  const hosted = location.protocol === 'http:' && location.hostname === '127.0.0.1';
+  const isOverlay = params.get('obs') === '1';
+  let syncingRemote = false;
+  let stateSaveTimer = null;
+  let lastTickAt = Date.now();
   let settings = { base:30, comment:5, gift:10 };
   let remaining = settings.base * 60; // seconds
   let running = false;
@@ -457,6 +462,7 @@
   }
 
   function render(){
+    if (hosted && !isOverlay && !syncingRemote) scheduleStateSave();
     renderDigitClock(fmt(remaining));
     clockEl.classList.toggle('overtime', remaining < 0);
     statusDot.classList.toggle('running', running && remaining >= 0);
@@ -518,14 +524,19 @@
   }
 
   function tick(){
-    remaining -= 1;
+    const now = Date.now();
+    const elapsed = Math.max(0,Math.floor((now-lastTickAt)/1000));
+    if (elapsed===0) return;
+    lastTickAt += elapsed*1000;
+    remaining -= elapsed;
     render();
   }
 
   toggleBtn.addEventListener('click', ()=>{
     running = !running;
     if(running){
-      intervalId = setInterval(tick, 1000);
+      lastTickAt = Date.now();
+      intervalId = setInterval(tick, 250);
     } else {
       clearInterval(intervalId);
     }
@@ -584,7 +595,7 @@
   const autoBadge = $('autoBadge');
   const resetSessionRow = $('resetSessionRow');
   const resetSessionBtn = $('resetSessionBtn');
-  const wsUrl = params.get('ws');
+  const wsUrl = params.get('ws') || (hosted ? 'ws://127.0.0.1:8787' : null);
   let activeSocket = null;
 
   if(wsUrl){
@@ -634,6 +645,7 @@
     socket.addEventListener('message', (msg)=>{
       let ev;
       try{ ev = JSON.parse(msg.data); } catch(e){ return; }
+      if (ev.type === 'timer_state') { applyRemoteState(ev.state); return; }
       handleAutoEvent(ev);
     });
   }
@@ -642,6 +654,7 @@
     const platform = ev.source === 'twitch' ? 'Twitch' : ev.source === 'youtube' ? 'YouTube' : ev.source;
     const who = ev.user ? ev.user : '';
 
+    if (isOverlay && ev.type !== 'timer_state') return;
     if(ev.type === 'session_reset'){
       history.push({type:'manual', label:'初コメ判定リセット', delta:'', time: new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})});
       render();
@@ -671,6 +684,40 @@
     if(e.key.toLowerCase() === 'g'){ giftBtnQuick.click(); }
   });
 
+  // Windowsアプリ版では同一サーバーから開き、操作画面だけが状態を更新する。
+  function scheduleStateSave() {
+    if (!hosted || isOverlay) return;
+    clearTimeout(stateSaveTimer);
+    stateSaveTimer = setTimeout(() => {
+      fetch('/api/timer-state', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({remaining,running,settings,commentCount,giftCount,history,track})
+      }).catch(e=>console.warn('タイマー保存失敗',e));
+    }, 150);
+  }
+  function applyRemoteState(s) {
+    if (!s || !Number.isFinite(s.remaining)) return;
+    syncingRemote = true;
+    remaining = s.remaining;
+    running = !!s.running;
+    settings = {...settings,...s.settings};
+    commentCount = Number(s.commentCount)||0;
+    giftCount = Number(s.giftCount)||0;
+    history = Array.isArray(s.history)?s.history:[];
+    track = Array.isArray(s.track)?s.track:[];
+    clearInterval(intervalId);
+    lastTickAt=Date.now();
+    if (running) intervalId=setInterval(tick,250);
+    render();
+    syncingRemote = false;
+  }
+  if (hosted) {
+    fetch('/api/timer-state').then(r=>r.json()).then(applyRemoteState).catch(console.warn);
+    if (isOverlay) {
+      toggleBtn.disabled=true;
+      resetBtn.disabled=true;
+    }
+  }
   // 画像数字の初期実装。ローカルストレージの容量制限に注意。
   const imageDigitKey = 'huenyan-image-digits-v1';
   let imageDigits = {};
